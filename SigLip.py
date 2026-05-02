@@ -49,7 +49,7 @@ class SiglipVisionEmbeddings(nn.Module):
         #[Batch, Embed_dim, Num_patches_height, Num_patches_width] Кол-во патчей 14х14=196
         embeddings = patch_embeds.flatten(2)
         #[Batch, Embed_dim, Num_patches]
-        embeddings = embeddings.trnaspose(1,2)
+        embeddings = embeddings.transpose(1,2)
         #[Batch, Num_patches, Embed_dim]
         embeddings = embeddings + self.pos_embedding(self.position_ids)
         return embeddings

@@ -9,17 +9,17 @@ image_net_standart_std = [0.5, 0.5, 0.5]
 def add_image_tokens_to_prompt(prefix_prompt, bos_token, image_seq_len, image_token):
     return f"{image_token*image_seq_len}{bos_token}{prefix_prompt}\n"
 
-def resize(image, size, resample, reducing_gap):
+def resize(image, size, resample: Image.Resampling = None, reducing_gap: Optional[int] = None):
     height, width = size
     resized_image = image.resize((width, height), resample=resample, reducing_gap=reducing_gap)
     return resized_image
 
-def rescale(image, scale, dtype: np.float32):
+def rescale(image, scale, dtype: np.dtype = np.float32):
     rescaled_image = image*scale
     rescaled_image = rescaled_image.astype(dtype)
     return rescaled_image
 
-def normalize(image, mean, std):
+def normalize(image, mean: Union[float, Iterable[float]], std: Union[float, Iterable[float]]):
     mean = np.array(mean, dtype=image.dtype)
     std = np.array(std, dtype=image.dtype)
     image = (image - mean) / std
@@ -28,6 +28,7 @@ def normalize(image, mean, std):
 def process_images(images:List[Image.Image], size: Dict[str, int] = None, resample: Image.Resampling = None, rescale_factor: float=None,
                   image_mean: Optional[Union[float, List[float]]] = None, image_std: Optional[Union[float, List[float]]] = None):
     height, width = size[0], size[1]
+    images = [image.convert("RGB") if image.mode != "RGB" else image for image in images]
     images = [resize(image=image, size=(height, width), resample=resample) for image in images]
     images = [np.array(image) for image in images]
     images = [rescale(image, scale=rescale_factor) for image in images]
@@ -63,7 +64,7 @@ class PaligemmaProcessor:
         pixel_values = np.stack(pixel_values, axis=0)
         pixel_values = torch.tensor(pixel_values)
         input_strings = [add_image_tokens_to_prompt(prefix_prompt=prompt, bos_token=self.tokenizer.bos_token, 
-                                                    image_seq_length=self.image_seq_length, image_token=self.IMAGE_TOKEN) for prompt in text]
+                                                    image_seq_len=self.image_seq_length, image_token=self.IMAGE_TOKEN) for prompt in text]
         inputs = self.tokenizer(input_strings, return_tensors="pt", padding=padding, truncation=truncation)
         return_data = {"pixel_values": pixel_values, **inputs}
         return return_data

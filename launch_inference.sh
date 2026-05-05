@@ -1,7 +1,7 @@
 #!/bin/bash
 
 MODEL_PATH="$HOME/paligemma-3b-pt-224"
-PROMPT="this is "
+PROMPT="The color of cup is "
 IMAGE_FILE_PATH="test_images/img1.png"
 MAX_TOKENS_TO_GENERATE=100
 TEMPERATURE=0.8

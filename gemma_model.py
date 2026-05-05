@@ -10,24 +10,24 @@ class KVCache():
         self.key_cache: List[torch.Tensor] = []
         self.value_cache: List[torch.Tensor] = []
    
-    def num_item(self):
+    def num_items(self):
         if len(self.key_cache) == 0:
             return 0
         else:
             return self.key_cache[0].shape[-2]
     
-    def update(self, key_states, value_states, layer_idx):
+    def update(self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int):
         if len(self.key_cache) <= layer_idx:
             self.key_cache.append(key_states)
             self.value_cache.append(value_states)
         else:
             self.key_cache[layer_idx] = torch.cat([self.key_cache[layer_idx], key_states], dim=-2)
-            value_states[layer_idx] = torch.cat([self.value_cache[layer_idx], value_states], dim=-2)
-        return self.key_cache[layer_idx], value_states[layer_idx]
+            self.value_cache[layer_idx] = torch.cat([self.value_cache[layer_idx], value_states], dim=-2)
+        return self.key_cache[layer_idx], self.value_cache[layer_idx]
 
 
 class GemmaConfig():
-    def __init__(self, vocab_size, hidden_size, intermediate_size, num_hidden_layers, num_attention_head,
+    def __init__(self, vocab_size, hidden_size, intermediate_size, num_hidden_layers, num_attention_heads,
                  num_key_value_heads, head_dim=256, max_position_embeddings=8192,rms_norm_eps=1e-6, 
                  rope_theta=10000.0, attention_bias=False, attention_dropout=0.0, pad_token_id=None, **kwargs):
         super().__init__()
@@ -36,7 +36,7 @@ class GemmaConfig():
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
         self.num_hidden_layers = num_hidden_layers
-        self.num_attention_head = num_attention_head
+        self.num_attention_heads = num_attention_heads
         self.head_dim = head_dim
         self.num_key_value_heads = num_key_value_heads
         self.rms_norm_eps = rms_norm_eps
@@ -68,7 +68,7 @@ class PaliGemmaConfig():
 
 
 class GemmaRMSNorm(nn.Module):
-    def __init__(self, dim, eps=1e-6):
+    def __init__(self, dim: int, eps: float =1e-6):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.zeros(dim))
@@ -96,7 +96,7 @@ class GemmaMLP(nn.Module):
         return self.down_proj(nn.functional.gelu(self.gate_proj(x), approximate="tanh") * self.up_proj(x))
 
 
-def repeat_kv(hidden_states, n_rep):
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int):
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
     if n_rep == 1:
         return hidden_states
@@ -117,12 +117,12 @@ class GemmaRotaryEmbedding(nn.Module):
     @torch.no_grad()
     def forward(self, x, position_ids, seq_len=None):
         self.inv_freq.to(x.device)
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1,1)
+        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
         position_ids_expanded = position_ids[:, None, :].float()
         device_type = x.device.type
         device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1,2)
+            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
             emb = torch.cat((freqs, freqs), dim=-1)
             cos = emb.cos()
             sin = emb.sin()
@@ -141,13 +141,13 @@ def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
     return q_embed, k_embed
 
 class GemmaAttention(nn.Module):
-    def __init__(self, config: GemmaConfig, layer_idx):
+    def __init__(self, config: GemmaConfig, layer_idx: Optional[int] = None):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
         self.attention_dropout = config.attention_dropout
         self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_head
+        self.num_heads = config.num_attention_heads
         self.head_dim = config.head_dim
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
@@ -162,14 +162,19 @@ class GemmaAttention(nn.Module):
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
         self.rotary_emb = GemmaRotaryEmbedding(self.head_dim, max_position_embeddings=self.max_position_embeddings, base=self.rope_theta)
 
-    def forward(self, hidden_states, attention_mask, position_ids, kv_cache, **kwargs):
+    def forward(self, 
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        kv_cache: Optional[KVCache] = None,
+        **kwargs) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1,2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1,2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1,2)
+        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = self.rotary_emb(value_states, position_ids, seq_len=None)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
@@ -178,7 +183,7 @@ class GemmaAttention(nn.Module):
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
-        attn_weights = torch.matmul(query_states, key_states.transpose(2,3)) / math.sqrt(self.head_dim)
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
         assert attention_mask is not None
         attn_weights = attn_weights + attention_mask
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -193,7 +198,7 @@ class GemmaAttention(nn.Module):
 
 
 class GemmaDecoderLayer(nn.Module):
-    def __init__(self, config: GemmaConfig, layer_idx):
+    def __init__(self, config: GemmaConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.self_attn = GemmaAttention(config=config, layer_idx=layer_idx)
@@ -201,17 +206,20 @@ class GemmaDecoderLayer(nn.Module):
         self.input_layernorm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
     
-    def forward(self, hidden_states, attention_mask, position_idx, kv_cache):
+    def forward(self, 
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        kv_cache: Optional[KVCache] = None):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
-        hidden_states, _ = self.self_attn(hidden_states=hidden_states, attention_mask=attention_mask, position_idx=position_idx, kv_cache=kv_cache)
+        hidden_states, _, = self.self_attn(hidden_states=hidden_states, attention_mask=attention_mask, position_ids=position_ids, kv_cache=kv_cache)
         hidden_states = residual + hidden_states
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
         return hidden_states
-
 
 
 class GemmaModel(nn.Module):
@@ -227,8 +235,13 @@ class GemmaModel(nn.Module):
     def get_input_embedddings(self):
         return self.embed_tokens
 
-    def forward(self, attention_mask, position_ids, input_embeds, kv_cache):
-        hidden_states = input_embeds
+    def forward(self, 
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        kv_cache: Optional[KVCache] = None):
+
+        hidden_states = inputs_embeds
         normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=hidden_states.dtype)
         hidden_states = hidden_states * normalizer
 
@@ -253,8 +266,8 @@ class GemmaForCasualLM(nn.Module):
     def tie_weights(self):
         self.lm_head.weight = self.model.embed_tokens.weight
 
-    def forward(self, attention_mask, position_ids, input_embeds, kv_cache):
-        outputs = self.model(attention_mask=attention_mask, position_ids=position_ids, input_embeds=input_embeds, kv_cache=kv_cache)
+    def forward(self, attention_mask, position_ids, inputs_embeds, kv_cache):
+        outputs = self.model(attention_mask=attention_mask, position_ids=position_ids, inputs_embeds=inputs_embeds, kv_cache=kv_cache)
         hidden_states = outputs
         logits = self.lm_head(hidden_states)
         logits = logits.float()
@@ -328,10 +341,11 @@ class PaliGemmaForConditionalGeneration(nn.Module):
     def forward(self, input_ids: torch.LongTensor = None, pixel_values: torch.FloatTensor = None, 
                 attention_mask: Optional[torch.Tensor] = None, kv_cache: Optional[KVCache] = None):
         assert torch.all(attention_mask == 1), "The input cannot be padded"
-        input_embeds = self.language_model.get_input_embeddings()(input_ids) # Превращает промпт в эмбеддинг, но надо заменить часть с img токенами
-        selected_image_features = self.vision_tower(pixel_values.to(input_embeds.dtype))
-        image_features = self.multi_modal_projector(selected_image_features)
-        input_embeds, attention_mask, position_ids = self._merge_input_ids_with_image_features(image_features, input_embeds, input_ids, attention_mask, kv_cache)
+        inputs_embeds = self.language_model.get_input_embeddings()(input_ids) # Превращает промпт в эмбеддинг, но надо заменить часть с img токенами
+        selected_image_feature = self.vision_tower(pixel_values.to(inputs_embeds.dtype))
+
+        image_features = self.multi_modal_projector(selected_image_feature)
+        inputs_embeds, attention_mask, position_ids = self._merge_input_ids_with_image_features(image_features, inputs_embeds, input_ids, attention_mask, kv_cache)
         
-        outputs = self.language_model(attention_mask=attention_mask, position_ids=position_ids, input_embeds=input_embeds, kv_cache=kv_cache)
+        outputs = self.language_model(attention_mask=attention_mask, position_ids=position_ids, inputs_embeds=inputs_embeds, kv_cache=kv_cache)
         return outputs

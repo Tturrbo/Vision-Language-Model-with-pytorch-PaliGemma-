@@ -84,7 +84,7 @@ class SiglipAttention(nn.Module):
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
-        if attn_output.size() != (batch_size, self.num_heads, seq_len, seq_len):
+        if attn_output.size() != (batch_size, self.num_heads, seq_len, self.head_dim):
             raise ValueError("Wrong Attention output size!")
         # [Batch_size, Num_heads, Num_pathces, Head_dim] -> [Batch_size, Num_pathces, Num_heads, Head_dim]
         attn_output = attn_output.transpose(1,2).contiguous()
@@ -114,7 +114,7 @@ class SiglipEncoderLayer(nn.Module):
         self.embed_dim = config.hidden_size
         self.self_attention = SiglipAttention(config)
         self.layer_norm1 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
-        self.mlp = nn.SiglipMLP(config)
+        self.mlp = SiglipMLP(config)
         self.layer_norm2 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
 
     def forward(self, hidden_states: torch.Tensor): # На входе и выходе: [Batch, Num_patches, Embed_dim]
@@ -151,8 +151,9 @@ class SiglipVisionTransformer(nn.Module):
 
     def forward(self, pixel_values: torch.Tensor):
         hidden_states = self.embeddings(pixel_values)
-        last_hidden_state = self.encoder(inputs_embed=hidden_states)
+        last_hidden_state = self.encoder(inputs_embeds=hidden_states)
         last_hidden_state = self.post_layernorm(last_hidden_state)
+        return last_hidden_state
 
 class SiglipVisionModel(nn.Module):
     def __init__(self, config: SiglipConfig):

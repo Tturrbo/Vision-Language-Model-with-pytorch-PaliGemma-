@@ -300,7 +300,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
     def tie_weights(self):
         return self.language_model.tie_weights()
     
-    def _merge_input_ids_with_image_features(self, image_features, inputs_embeds, input_ids, attention_mask, kv_cache: Optional[KVCache]=None):
+    def _merge_input_ids_with_image_features(self, image_features: torch.Tensor, inputs_embeds: torch.Tensor, input_ids: torch.Tensor, attention_mask: torch.Tensor, kv_cache: Optional[KVCache] = None):
         _, _, embed_dim = image_features.shape
         batch_size, sequence_length = input_ids.shape
         dtype, device = inputs_embeds.dtype, inputs_embeds.device
@@ -324,7 +324,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
             casual_mask = torch.full((batch_size, q_len, q_len), fill_value=0, dtype=dtype, device=device)
         else:
             assert q_len == 1
-            kv_len = kv_cache.num_items() * q_len
+            kv_len = kv_cache.num_items() + q_len
             casual_mask = torch.full((batch_size, q_len, kv_len), fill_value=0, dtype=dtype, device=device)
 
         casual_mask = casual_mask.unsqueeze(1)

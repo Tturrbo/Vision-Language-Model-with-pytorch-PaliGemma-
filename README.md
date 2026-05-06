@@ -1,5 +1,7 @@
 # Paligemma VLM model with Pytorch
 
+Propmpts: 1. "The color of cup is " 2. "This is the cup of "
+
 The cup is kinda green, but 19th century is crazy:
 
 <p align="center">
